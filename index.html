@@ -3,28 +3,40 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>シンプル動画MP3変換機</title>
+    <title>高音質 動画MP3変換機 v2</title>
     <script src="coi-serviceworker.js"></script>
     <style>
-        body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; text-align: center; }
-        .container { border: 2px dashed #ccc; padding: 2rem; border-radius: 10px; }
-        input[type="file"] { margin: 1rem 0; }
-        button { padding: 10px 20px; font-size: 1.2rem; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+        body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; text-align: center; background-color: #f9f9f9; }
+        .container { background: white; border: 1px solid #ddd; padding: 2rem; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        input[type="file"], input[type="text"] { margin: 1rem 0; width: 80%; padding: 10px; }
+        button { padding: 12px 24px; font-size: 1rem; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; margin: 5px; }
         button:disabled { background: #ccc; cursor: not-allowed; }
-        #message { margin-top: 1rem; color: #555; font-weight: bold; }
+        button.secondary { background: #6c757d; }
+        #message { margin-top: 1rem; color: #333; font-weight: bold; white-space: pre-line; }
         #download-area { margin-top: 1rem; }
-        a.download-btn { display: inline-block; padding: 10px 20px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; }
+        a.download-btn { display: inline-block; padding: 12px 30px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; }
+        .divider { border-bottom: 2px solid #eee; margin: 20px 0; }
+        .badge { background: #ffc107; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h1>動画 → MP3 変換</h1>
-    <p>ブラウザ上で変換します。通信は発生しません。</p>
+    <h1>動画 <span style="font-size:0.8em">➡</span> MP3 <span class="badge">高音質320kbps</span></h1>
 
     <div class="container">
+        <h3>📂 ファイルを選択</h3>
         <input type="file" id="uploader" accept="video/*">
         <br>
-        <button id="convert-btn" disabled>変換開始</button>
+        <button id="convert-file-btn" disabled>変換開始</button>
+
+        <div class="divider"></div>
+
+        <h3>🔗 URLから取得 (上級者向け)</h3>
+        <p style="font-size:0.8rem; color:red;">※YouTube等はセキュリティ(CORS)によりブロックされます</p>
+        <input type="text" id="url-input" placeholder="動画の直接リンク(https://.../video.mp4)">
+        <br>
+        <button id="convert-url-btn" class="secondary" disabled>URLから読み込んで変換</button>
+
         <div id="message"></div>
         <div id="download-area"></div>
     </div>
@@ -36,58 +48,89 @@
         const ffmpeg = createFFmpeg({ log: true });
         
         const uploader = document.getElementById('uploader');
-        const btn = document.getElementById('convert-btn');
+        const urlInput = document.getElementById('url-input');
+        const fileBtn = document.getElementById('convert-file-btn');
+        const urlBtn = document.getElementById('convert-url-btn');
         const message = document.getElementById('message');
         const downloadArea = document.getElementById('download-area');
 
-        // FFmpegの準備
+        // 初期化
         const loadFFmpeg = async () => {
-            message.innerText = 'エンジン起動中... (初回は少し時間がかかります)';
+            message.innerText = 'エンジン起動中...';
             await ffmpeg.load();
-            message.innerText = '準備完了！動画を選んでください。';
-            btn.disabled = false;
+            message.innerText = '準備完了！';
+            fileBtn.disabled = false;
+            urlBtn.disabled = false;
         };
         loadFFmpeg();
 
-        // 変換処理
-        btn.addEventListener('click', async () => {
-            const file = uploader.files[0];
-            if (!file) {
-                alert('ファイルを選択してください');
-                return;
-            }
-
-            message.innerText = '変換中... このままお待ちください';
-            btn.disabled = true;
-            downloadArea.innerHTML = ''; // リセット
+        // 共通変換処理関数
+        const startConversion = async (inputData, filename) => {
+            message.innerText = '変換中... (高音質処理中)';
+            fileBtn.disabled = true;
+            urlBtn.disabled = true;
+            downloadArea.innerHTML = '';
 
             try {
-                // ファイルをFFmpeg内の仮想空間に書き込む
-                const inputName = 'input.mp4';
+                const inputName = 'input_video';
                 const outputName = 'output.mp3';
-                ffmpeg.FS('writeFile', inputName, await fetchFile(file));
 
-                // コマンド実行 (入力 -> MP3変換)
-                await ffmpeg.run('-i', inputName, outputName);
+                // データを仮想ファイルシステムに書き込み
+                ffmpeg.FS('writeFile', inputName, await fetchFile(inputData));
 
-                // 結果を読み込む
+                // FFmpegコマンド実行
+                // -i: 入力
+                // -vn: 映像を無効化(Video None)
+                // -acodec libmp3lame: MP3エンコーダ
+                // -b:a 320k: ビットレート320kbps (高音質)
+                await ffmpeg.run('-i', inputName, '-vn', '-acodec', 'libmp3lame', '-b:a', '320k', outputName);
+
+                // 出力読み込み
                 const data = ffmpeg.FS('readFile', outputName);
 
-                // ダウンロードリンク作成
+                // ダウンロードリンク生成
                 const url = URL.createObjectURL(new Blob([data.buffer], { type: 'audio/mp3' }));
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = file.name.split('.')[0] + '.mp3';
+                link.download = filename + '_320k.mp3';
                 link.className = 'download-btn';
-                link.innerText = 'MP3をダウンロード';
+                link.innerText = 'MP3をダウンロード (320kbps)';
                 downloadArea.appendChild(link);
 
                 message.innerText = '変換完了！';
             } catch (e) {
                 console.error(e);
-                message.innerText = 'エラーが発生しました。コンソールを確認してください。';
+                message.innerText = 'エラーが発生しました。\n' + e.message;
             } finally {
-                btn.disabled = false;
+                fileBtn.disabled = false;
+                urlBtn.disabled = false;
+            }
+        };
+
+        // ボタン1: ファイルから
+        fileBtn.addEventListener('click', () => {
+            const file = uploader.files[0];
+            if (!file) return alert('ファイルを選んでください');
+            startConversion(file, file.name.split('.')[0]);
+        });
+
+        // ボタン2: URLから
+        urlBtn.addEventListener('click', async () => {
+            const url = urlInput.value.trim();
+            if (!url) return alert('URLを入力してください');
+            
+            message.innerText = 'URLからデータを取得中...';
+            try {
+                // Fetchでデータを取得
+                const res = await fetch(url);
+                if (!res.ok) throw new Error(`アクセスできませんでした (Status: ${res.status})`);
+                const blob = await res.blob();
+                
+                // 変換開始
+                startConversion(blob, "url_video");
+            } catch (e) {
+                console.error(e);
+                message.innerText = '【エラー】URLから動画を取得できませんでした。\nYouTubeなどはCORS制限により直接取得できません。\n' + e.message;
             }
         });
     </script>
