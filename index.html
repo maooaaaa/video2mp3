@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シンプル動画MP3変換機</title>
+    <script src="coi-serviceworker.js"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; text-align: center; }
+        .container { border: 2px dashed #ccc; padding: 2rem; border-radius: 10px; }
+        input[type="file"] { margin: 1rem 0; }
+        button { padding: 10px 20px; font-size: 1.2rem; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #message { margin-top: 1rem; color: #555; font-weight: bold; }
+        #download-area { margin-top: 1rem; }
+        a.download-btn { display: inline-block; padding: 10px 20px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+    <h1>動画 → MP3 変換</h1>
+    <p>ブラウザ上で変換します。通信は発生しません。</p>
+
+    <div class="container">
+        <input type="file" id="uploader" accept="video/*">
+        <br>
+        <button id="convert-btn" disabled>変換開始</button>
+        <div id="message"></div>
+        <div id="download-area"></div>
+    </div>
+
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    
+    <script>
+        const { createFFmpeg, fetchFile } = FFmpeg;
+        const ffmpeg = createFFmpeg({ log: true });
+        
+        const uploader = document.getElementById('uploader');
+        const btn = document.getElementById('convert-btn');
+        const message = document.getElementById('message');
+        const downloadArea = document.getElementById('download-area');
+
+        // FFmpegの準備
+        const loadFFmpeg = async () => {
+            message.innerText = 'エンジン起動中... (初回は少し時間がかかります)';
+            await ffmpeg.load();
+            message.innerText = '準備完了！動画を選んでください。';
+            btn.disabled = false;
+        };
+        loadFFmpeg();
+
+        // 変換処理
+        btn.addEventListener('click', async () => {
+            const file = uploader.files[0];
+            if (!file) {
+                alert('ファイルを選択してください');
+                return;
+            }
+
+            message.innerText = '変換中... このままお待ちください';
+            btn.disabled = true;
+            downloadArea.innerHTML = ''; // リセット
+
+            try {
+                // ファイルをFFmpeg内の仮想空間に書き込む
+                const inputName = 'input.mp4';
+                const outputName = 'output.mp3';
+                ffmpeg.FS('writeFile', inputName, await fetchFile(file));
+
+                // コマンド実行 (入力 -> MP3変換)
+                await ffmpeg.run('-i', inputName, outputName);
+
+                // 結果を読み込む
+                const data = ffmpeg.FS('readFile', outputName);
+
+                // ダウンロードリンク作成
+                const url = URL.createObjectURL(new Blob([data.buffer], { type: 'audio/mp3' }));
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = file.name.split('.')[0] + '.mp3';
+                link.className = 'download-btn';
+                link.innerText = 'MP3をダウンロード';
+                downloadArea.appendChild(link);
+
+                message.innerText = '変換完了！';
+            } catch (e) {
+                console.error(e);
+                message.innerText = 'エラーが発生しました。コンソールを確認してください。';
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
